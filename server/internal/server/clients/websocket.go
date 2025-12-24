@@ -47,12 +47,20 @@ func (client *WebsocketClient) Id() uint64 {
 }
 
 func (client *WebsocketClient) ProcessMessage (senderId uint64, message packets.Msg) {
-
+	if senderId == client.id {
+		// This message was sent by our own client, so broadcast it to everyone else
+		client.Broadcast(message)
+	} else {
+		// Another client interfacer passed this onto us, or it was broadcast from the hub, so foward it to our own client
+		client.SocketSendAs(message, senderId)
+	}
 }
 
 func (client *WebsocketClient) Initialize(id uint64) {
 	client.id = id
 	client.logger.SetPrefix(fmt.Sprintf("Client %d: ", client.id))
+	client.SocketSend(packets.NewId(client.id))
+	client.logger.Printf("Sent ID to client")
 }
 
 func (client *WebsocketClient) SocketSend(message packets.Msg) {
@@ -68,7 +76,7 @@ func (client *WebsocketClient) SocketSendAs(message packets.Msg, senderId uint64
 }
 
 func (client *WebsocketClient) PassToPeer(message packets.Msg, peerId uint64) {
-	if peer, exists := client.hub.Clients[peerId]; exists {
+	if peer, exists := client.hub.Clients.Get(peerId); exists {
 		peer.ProcessMessage(client.id, message)
 	}
 }
