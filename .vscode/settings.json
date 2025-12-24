@@ -1,0 +1,6 @@
+// Install Protobuf VSC extension
+{
+  "protobuf.protoc.path": "protoc",
+  "protobuf.protoc.compileOnSave": true,
+  "protobuf.protoc.options": ["--proto_path=${workspaceFolder}/shared", "--go_out=${workspaceFolder}/server"]
+}
