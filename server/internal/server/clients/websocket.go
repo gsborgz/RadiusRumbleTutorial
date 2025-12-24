@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"server/internal/server"
+	"server/internal/server/states"
 	"server/pkg/packets"
 
 	"github.com/gorilla/websocket"
@@ -16,6 +17,7 @@ type WebsocketClient struct {
 	conn *websocket.Conn
 	hub *server.Hub
 	sendChan chan *packets.Packet
+	state server.ClientStateHandler
 	logger *log.Logger
 }
 
@@ -46,21 +48,38 @@ func (client *WebsocketClient) Id() uint64 {
 	return client.id;
 }
 
-func (client *WebsocketClient) ProcessMessage (senderId uint64, message packets.Msg) {
-	if senderId == client.id {
-		// This message was sent by our own client, so broadcast it to everyone else
-		client.Broadcast(message)
-	} else {
-		// Another client interfacer passed this onto us, or it was broadcast from the hub, so foward it to our own client
-		client.SocketSendAs(message, senderId)
+func (client *WebsocketClient) SetState(state server.ClientStateHandler) {
+	prevStateName := "None"
+
+	if client.state != nil {
+		prevStateName = client.state.Name()
+		client.state.OnExit()
 	}
+
+	newStateName := "None"
+
+	if state != nil {
+		newStateName = state.Name()
+	}
+
+	client.logger.Printf("Switching from state %s to %s", prevStateName, newStateName)
+	
+	client.state = state
+
+	if client.state != nil {
+		client.state.SetClient(client)
+		client.state.OnEnter()
+	}
+}
+
+func (client *WebsocketClient) ProcessMessage (senderId uint64, message packets.Msg) {
+	client.state.HandleMessage(senderId, message)
 }
 
 func (client *WebsocketClient) Initialize(id uint64) {
 	client.id = id
 	client.logger.SetPrefix(fmt.Sprintf("Client %d: ", client.id))
-	client.SocketSend(packets.NewId(client.id))
-	client.logger.Printf("Sent ID to client")
+	client.SetState(&states.Connected{})
 }
 
 func (client *WebsocketClient) SocketSend(message packets.Msg) {
@@ -158,6 +177,8 @@ func (client *WebsocketClient) WritePump() {
 
 func (client *WebsocketClient) Close(reason string) {
 	client.logger.Printf("Closing client connection because: %s", reason)
+
+	client.SetState(nil)
 
 	client.hub.UnregisterChan <- client
 	client.conn.Close()
