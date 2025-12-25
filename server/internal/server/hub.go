@@ -1,11 +1,25 @@
 package server
 
 import (
+	"context"
+	"database/sql"
+	_ "embed"
 	"log"
 	"net/http"
+	"server/internal/server/db"
 	"server/internal/server/objects"
 	"server/pkg/packets"
+
+	_ "modernc.org/sqlite"
 )
+
+//go:embed db/config/schema.sql
+var schemaGenSql string
+
+type DbTransaction struct {
+	Ctx context.Context
+	Queries *db.Queries
+}
 
 type ClientStateHandler interface {
 	Name() string
@@ -47,6 +61,9 @@ type ClientInterfacer interface {
 	// Pump data from the client directly to the connected socket
 	WritePump()
 
+	// A reference to the database transaction context for this client
+	DbTransaction() *DbTransaction
+
 	// Close the client's connections and cleanup
 	Close(reason string)
 }
@@ -54,21 +71,49 @@ type ClientInterfacer interface {
 type Hub struct {
 	Clients *objects.SharedCollection[ClientInterfacer]
 
+	// Packets in this channel will be processed by all connected clients except the sender
 	BroadcastChan chan *packets.Packet
+
+	// Clients in this channel will be registered to the hub
 	RegisterChan chan ClientInterfacer
+
+	// Clients in this channel will be unregistered from the hub
 	UnregisterChan chan ClientInterfacer
+
+	// Database connection pool
+	dbPool *sql.DB
+}
+
+func (hub *Hub) NewDbTransaction() *DbTransaction {
+	return &DbTransaction{
+		Ctx: context.Background(),
+		Queries: db.New(hub.dbPool),
+	}
 }
 
 func NewHub() *Hub {
+	dbPool, err:= sql.Open("sqlite", "db.sqlite")
+
+	if err != nil {
+		log.Fatalf("Error opening database: %v", err)
+	}
+
 	return &Hub{
 		Clients: objects.NewSharedCollection[ClientInterfacer](),
 		BroadcastChan: make(chan *packets.Packet),
 		RegisterChan: make(chan ClientInterfacer),
 		UnregisterChan: make(chan ClientInterfacer),
+		dbPool: dbPool,
 	}
 }
 
 func (hub *Hub) Run() {
+	log.Println("Initializing database...")
+
+	if _, err := hub.dbPool.ExecContext(context.Background(), schemaGenSql); err != nil {
+		log.Fatalf("Error initializing database: %v", err)
+	}
+
 	log.Println("Awaiting client registrations")
 
 	for {
