@@ -40,8 +40,10 @@ func (game *InGame) OnEnter() {
 	game.player.Radius = 20
 
 	// Send the player's initial state to the client
-	game.logger.Println("olá")
 	game.client.SocketSend(packets.NewPlayer(game.client.Id(), game.player))
+
+	// Send the spores to the client in the background
+	go game.sendInitialSpores(80, 25 * time.Millisecond)
 }
 
 func (game *InGame) HandleMessage(senderId uint64, message packets.Msg) {
@@ -50,6 +52,10 @@ func (game *InGame) HandleMessage(senderId uint64, message packets.Msg) {
 			game.handlePlayer(senderId, message)
 		case *packets.Packet_PlayerDirection:
 			game.handlePlayerDirection(senderId, message)
+		case *packets.Packet_Chat:
+			game.handleChat(senderId, message)
+		case *packets.Packet_SporeConsumed:
+			game.handleSporeConsumed(senderId, message)
 	}
 }
 
@@ -61,12 +67,49 @@ func (game *InGame) OnExit() {
 	game.client.SharedGameObjects().Players.Remove(game.client.Id())
 }
 
+func (game *InGame) sendInitialSpores(batchSize int, delay time.Duration) {
+	sporesBatch := make(map[uint64]*objects.Spore, batchSize)
+
+	game.client.SharedGameObjects().Spores.ForEach(func(sporeId uint64, spore *objects.Spore) {
+		sporesBatch[sporeId] = spore
+
+		if len(sporesBatch) >= batchSize {
+			game.client.SocketSend(packets.NewSporesBatch(sporesBatch))
+			sporesBatch = make(map[uint64]*objects.Spore, batchSize)
+			time.Sleep(delay)
+		}
+	})
+
+	// Send any remaining spores
+	if len(sporesBatch) > 0 {
+		game.client.SocketSend(packets.NewSporesBatch((sporesBatch)))
+	}
+}
+
 func (game *InGame) handlePlayer(senderId uint64, message packets.Msg) {
 	if senderId == game.client.Id() {
 		return
 	}
 
 	game.client.SocketSendAs(message, senderId)
+}
+
+func (game *InGame) handleChat(senderId uint64, message *packets.Packet_Chat) {
+	if senderId == game.client.Id() {
+		game.client.Broadcast(message)
+	} else {
+		game.client.SocketSendAs(message, senderId)
+	}
+}
+
+func (game *InGame) handleSporeConsumed(senderId uint64, message *packets.Packet_SporeConsumed) {
+	game.logger.Printf("Spore %d consumed by player", message.SporeConsumed.SporeId)
+	
+	if senderId == game.client.Id() {
+		game.client.Broadcast(message)
+	} else {
+		game.client.SocketSendAs(message, senderId)
+	}
 }
 
 func (game *InGame) handlePlayerDirection(senderId uint64, message *packets.Packet_PlayerDirection) {
