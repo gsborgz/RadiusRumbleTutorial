@@ -17,7 +17,7 @@ func _ready() -> void:
 	_register_button.pressed.connect(_on_register_button_pressed)
 
 func _on_ws_packet_received(packet: packets.Packet) -> void:
-	#var sender_id := packet.get_sender_id()
+	var sender_id := packet.get_sender_id()
 	
 	if packet.has_deny_response():
 		var deny_response_msg := packet.get_deny_response()

@@ -21,9 +21,11 @@ grow_vertical = 2
 
 [node name="Username" type="LineEdit" parent="UI/VBoxContainer"]
 layout_mode = 2
+text = "gabriel"
 
 [node name="Password" type="LineEdit" parent="UI/VBoxContainer"]
 layout_mode = 2
+text = "12345678"
 
 [node name="HBoxContainer" type="HBoxContainer" parent="UI/VBoxContainer"]
 layout_mode = 2

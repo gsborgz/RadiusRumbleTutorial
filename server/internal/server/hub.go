@@ -21,6 +21,11 @@ type DbTransaction struct {
 	Queries *db.Queries
 }
 
+type SharedGameObjects struct {
+	// The ID of the player is the ID of the client
+	Players *objects.SharedCollection[*objects.Player]
+}
+
 type ClientStateHandler interface {
 	Name() string
 
@@ -64,6 +69,8 @@ type ClientInterfacer interface {
 	// A reference to the database transaction context for this client
 	DbTransaction() *DbTransaction
 
+	SharedGameObjects() *SharedGameObjects
+
 	// Close the client's connections and cleanup
 	Close(reason string)
 }
@@ -82,6 +89,8 @@ type Hub struct {
 
 	// Database connection pool
 	dbPool *sql.DB
+
+	SharedGameObjects *SharedGameObjects 
 }
 
 func (hub *Hub) NewDbTransaction() *DbTransaction {
@@ -103,6 +112,9 @@ func NewHub() *Hub {
 		BroadcastChan: make(chan *packets.Packet),
 		RegisterChan: make(chan ClientInterfacer),
 		UnregisterChan: make(chan ClientInterfacer),
+		SharedGameObjects: &SharedGameObjects{
+			Players: objects.NewSharedCollection[*objects.Player](),
+		},
 		dbPool: dbPool,
 	}
 }

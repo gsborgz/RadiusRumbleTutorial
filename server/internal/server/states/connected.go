@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"server/internal/server"
 	"server/internal/server/db"
+	"server/internal/server/objects"
 	"server/pkg/packets"
 	"strings"
 
@@ -87,6 +88,12 @@ func (connected *Connected) handleLoginRequest(senderId uint64, message *packets
 
 	connected.logger.Printf("User %s logged in successfully!", username)
 	connected.client.SocketSend(packets.NewOkResponse())
+
+	connected.client.SetState(&InGame{
+		player: &objects.Player{
+			Name: username,
+		},
+	})
 }
 
 func (connected *Connected) handleRegisterRequest(senderId uint64, message *packets.Packet_RegisterRequest) {

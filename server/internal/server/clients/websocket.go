@@ -181,6 +181,10 @@ func (client *WebsocketClient) DbTransaction() *server.DbTransaction {
 	return client.dbTransaction
 }
 
+func (client *WebsocketClient) SharedGameObjects() *server.SharedGameObjects {
+	return client.hub.SharedGameObjects
+}
+
 func (client *WebsocketClient) Close(reason string) {
 	client.logger.Printf("Closing client connection because: %s", reason)
 
