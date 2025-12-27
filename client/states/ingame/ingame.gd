@@ -69,6 +69,8 @@ func _handle_spore_msg(sender_id: int, spore_msg: packets.SporeMessage) -> void:
 func _on_player_area_entered(area: Area2D) -> void:
 	if area is Spore:
 		_consume_spore(area as Spore)
+	elif area is Actor:
+		_consume_actor(area as Actor)
 
 func _consume_spore(spore: Spore) -> void:
 	var packet := packets.Packet.new()
@@ -78,14 +80,39 @@ func _consume_spore(spore: Spore) -> void:
 	
 	WS.send(packet)
 	_remove_spore(spore)
+
+func _consume_actor(actor: Actor) -> void:
+	var packet = packets.Packet.new()
+	var player_consumed_msg := packet.new_player_consumed()
 	
+	player_consumed_msg.set_player_id(actor.actor_id)
+	
+	WS.send(packet)
+	_remove_actor(actor)
+
 func _handle_spore_consumed_msg(sender_id: int, spore_consumed_msg: packets.SporeConsumedMessage) -> void:
-	var spore_id := spore_consumed_msg.get_spore_id()
-	
-	if spore_id in _spores:
-		var spore := _spores[spore_id]
+	if sender_id in _players:
+		var spore_id := spore_consumed_msg.get_spore_id()
 		
-		_remove_spore(spore)
+		if spore_id in _spores:
+			var actor := _players[sender_id]
+			var new_radius := spore_consumed_msg.get_new_radius()
+			var spore := _spores[spore_id]
+			
+			actor.radius = new_radius
+			_remove_spore(spore)
+
+func _handle_player_consumed_msg(sender_id: int, player_consumed_msg: packets.PlayerConsumedMessage) -> void:
+	if sender_id in _players:
+		var actor_id := player_consumed_msg.get_player_id()
+		
+		if actor_id in _players:
+			var consumed_actor := _players[actor_id]
+			var player := _players[sender_id]
+			var new_radius := player_consumed_msg.get_new_radius()
+			
+			player.radius = new_radius
+			_remove_actor(consumed_actor)
 
 func _handle_spores_batch_msg(sender_id: int, spores_batch_msg: packets.SporesBatchMessage) -> void:
 	for spore_msg in spores_batch_msg.get_spores():
@@ -94,6 +121,10 @@ func _handle_spores_batch_msg(sender_id: int, spores_batch_msg: packets.SporesBa
 func _remove_spore(spore: Spore) -> void:
 	_spores.erase(spore.spore_id)
 	spore.queue_free()
+	
+func _remove_actor(actor: Actor) -> void:
+	_players.erase(actor.actor_id)
+	actor.queue_free()
 
 func _on_line_edit_text_submitted(new_text: String) -> void:
 	var packet := packets.Packet.new()
@@ -130,5 +161,7 @@ func _on_ws_packet_received(packet: packets.Packet) -> void:
 		_handle_spore_msg(sender_id, packet.get_spore())
 	elif packet.has_spore_consumed():
 		_handle_spore_consumed_msg(sender_id, packet.get_spore_consumed())
+	elif packet.has_player_consumed():
+		_handle_player_consumed_msg(sender_id, packet.get_player_consumed())
 	elif packet.has_spores_batch():
 		_handle_spores_batch_msg(sender_id, packet.get_spores_batch())

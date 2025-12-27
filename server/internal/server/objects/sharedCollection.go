@@ -82,6 +82,6 @@ func (collection *SharedCollection[T]) Get(id uint64) (T, bool) {
 
 // Get the approximate number of objects in the map
 // The reason this is approximate is because the map is read without holding the lock
-func (collection *SharedCollection[T]) len() int {
+func (collection *SharedCollection[T]) Len() int {
 	return len(collection.objectsMap)
 }

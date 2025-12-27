@@ -17,7 +17,11 @@ var speed: float
 var is_player: bool
 
 var velocity: Vector2
-var radius: float
+var radius: float:
+	set(new_radius):
+		radius = new_radius
+		_collision_shape.radius = new_radius
+		queue_redraw()
 
 @warning_ignore("shadowed_variable")
 static func instantiate(actor_id: int, actor_name: String, x: float, y: float, radius: float, speed: float, is_player: bool) -> Actor:

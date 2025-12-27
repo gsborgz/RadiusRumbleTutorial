@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
 	"server/internal/server"
 	"server/internal/server/objects"
 	"server/pkg/packets"
@@ -34,8 +33,7 @@ func (game *InGame) OnEnter() {
 	go game.client.SharedGameObjects().Players.Add(game.player, game.client.Id())
 
 	// Set the initial properties of the player
-	game.player.X = rand.Float64() * 1000
-	game.player.Y = rand.Float64() * 1000
+	game.player.X, game.player.Y = objects.SpawnCoords(game.player.Radius, game.client.SharedGameObjects().Players, nil)
 	game.player.Speed = 15.0
 	game.player.Radius = 20
 
@@ -56,6 +54,10 @@ func (game *InGame) HandleMessage(senderId uint64, message packets.Msg) {
 			game.handleChat(senderId, message)
 		case *packets.Packet_SporeConsumed:
 			game.handleSporeConsumed(senderId, message)
+		case *packets.Packet_PlayerConsumed:
+			game.handlePlayerConsumed(senderId, message)
+		case *packets.Packet_Spore:
+			game.handleSpore(senderId, message)
 	}
 }
 
@@ -86,11 +88,16 @@ func (game *InGame) sendInitialSpores(batchSize int, delay time.Duration) {
 	}
 }
 
-func (game *InGame) handlePlayer(senderId uint64, message packets.Msg) {
+func (game *InGame) handlePlayer(senderId uint64, message *packets.Packet_Player) {
 	if senderId == game.client.Id() {
+		game.logger.Println("Received player message from our own client, ignoring")
 		return
 	}
 
+	game.client.SocketSendAs(message, senderId)
+}
+
+func (game *InGame) handleSpore(senderId uint64, message *packets.Packet_Spore) {
 	game.client.SocketSendAs(message, senderId)
 }
 
@@ -103,13 +110,92 @@ func (game *InGame) handleChat(senderId uint64, message *packets.Packet_Chat) {
 }
 
 func (game *InGame) handleSporeConsumed(senderId uint64, message *packets.Packet_SporeConsumed) {
-	game.logger.Printf("Spore %d consumed by player", message.SporeConsumed.SporeId)
-	
-	if senderId == game.client.Id() {
-		game.client.Broadcast(message)
-	} else {
+	if senderId != game.client.Id() {
 		game.client.SocketSendAs(message, senderId)
+		return
 	}
+
+	// If the spore was supposely consumed by our player
+	errorMessage := "Could not verify spore consumption: "
+
+	// Check if spore exists
+	sporeId := message.SporeConsumed.SporeId
+	spore, err := game.getSpore(sporeId)
+
+	if err != nil {
+		game.logger.Println(errorMessage + err.Error())
+		return
+	}
+
+	// Check if the spore is close enough to be consumed
+	err = game.validatePlayerCloseToObject(spore.X, spore.Y, spore.Radius, 10)
+
+	if err != nil {
+		game.logger.Println(errorMessage + err.Error())
+		return
+	}
+
+	// The spore consumption is valid, so grow the player and remove the spore
+	sporeMass := radiusToMass(spore.Radius)
+	newRadius := game.nextRadius(sporeMass)
+	game.player.Radius = newRadius
+
+	go game.client.SharedGameObjects().Spores.Remove(senderId)
+
+	message.SporeConsumed.NewRadius = newRadius
+
+	game.client.Broadcast(message)
+}
+
+func (game *InGame) handlePlayerConsumed(senderId uint64, message *packets.Packet_PlayerConsumed) {
+	if senderId != game.client.Id() {
+		game.client.SocketSendAs(message, senderId)
+
+		if message.PlayerConsumed.PlayerId == game.client.Id() {
+			game.logger.Println("Player was consumed, respawning")
+			game.client.SetState(&InGame{
+				player: &objects.Player{
+					Name: game.player.Name,
+				},
+			})
+		}
+
+		return
+	}
+
+	errorMessage := "Could not verify player consumption: "
+
+	otherId := message.PlayerConsumed.PlayerId	
+	other, err := game.getOtherPlayer(otherId)
+
+	if err != nil {
+		game.logger.Println(errorMessage, err.Error())
+		return
+	}
+
+	ourMass := radiusToMass(game.player.Radius)
+	otherMass := radiusToMass(other.Radius)
+	
+	if ourMass <= otherMass*1.5 {
+		game.logger.Printf(errorMessage + "player not massive enough to consume the other player (our radius: %f, other radius: %f)", game.player.Radius, other.Radius)
+		return
+	}
+
+	err = game.validatePlayerCloseToObject(other.X, other.Y, other.Radius, 10)
+
+	if err != nil {
+		game.logger.Println(errorMessage, err.Error())
+		return
+	}
+
+	newRadius := game.nextRadius(otherMass)
+	game.player.Radius = newRadius
+	
+	go game.client.SharedGameObjects().Players.Remove(otherId)
+
+	message.PlayerConsumed.NewRadius = newRadius
+
+	game.client.Broadcast(message)
 }
 
 func (game *InGame) handlePlayerDirection(senderId uint64, message *packets.Packet_PlayerDirection) {
@@ -126,7 +212,6 @@ func (game *InGame) handlePlayerDirection(senderId uint64, message *packets.Pack
 		}
 	}
 }
-
 
 func (game *InGame) updatePlayerLoop(ctx context.Context) {
 	const delta float64 = 0.05
@@ -157,4 +242,53 @@ func (game *InGame) syncPlayer(delta float64) {
 	game.client.Broadcast(updatePacket)
 
 	go game.client.SocketSend(updatePacket)
+}
+
+func (game *InGame) getSpore(sporeId uint64) (*objects.Spore, error) {
+	spore, exists := game.client.SharedGameObjects().Spores.Get(sporeId)
+
+	if !exists {
+		return nil, fmt.Errorf("Spore with ID %d does not exist", sporeId)
+	}
+
+	return spore, nil
+}
+
+func (game *InGame) getOtherPlayer(playerId uint64) (*objects.Player, error) {
+	player, exists := game.client.SharedGameObjects().Players.Get(playerId)
+
+	if !exists {
+		return nil, fmt.Errorf("Player with ID %d does not exist", playerId)
+	}
+
+	return player, nil
+}
+
+func (game *InGame) validatePlayerCloseToObject(objX, objY, objRadius, buffer float64) error {
+	realDX := game.player.X - objX
+	realDY := game.player.Y - objY
+	realDistSq := realDX * realDX + realDY * realDY
+	thresholdDist := game.player.Radius + buffer + objRadius
+	thresholdDistSq := thresholdDist * thresholdDist
+
+	if realDistSq > thresholdDistSq {
+		return fmt.Errorf("Player is too far from the object (distSq: %f, thresholdSq: %f)", realDistSq, thresholdDistSq)
+	}
+
+	return nil
+}
+
+func radiusToMass(radius float64) float64 {
+	return math.Pi * radius * radius
+}
+
+func massToRadius(mass float64) float64 {
+	return math.Sqrt(mass / math.Pi)
+}
+
+func (game *InGame) nextRadius(massDiff float64) float64 {
+	oldMass := radiusToMass(game.player.Radius)
+	newMass := oldMass + massDiff
+
+	return massToRadius(newMass)
 }

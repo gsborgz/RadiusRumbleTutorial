@@ -10,6 +10,7 @@ import (
 	"server/internal/server/db"
 	"server/internal/server/objects"
 	"server/pkg/packets"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -136,6 +137,8 @@ func (hub *Hub) Run() {
 		hub.SharedGameObjects.Spores.Add(hub.newSpore())
 	}
 
+	go hub.replenishSporesLoop(2 * time.Second)
+
 	log.Println("Awaiting client registrations")
 
 	for {
@@ -172,7 +175,37 @@ func (hub *Hub) Serve(getNewClient func (*Hub, http.ResponseWriter, *http.Reques
 
 func (hub *Hub) newSpore() *objects.Spore {
 	sporeRadius := max(10 + rand.NormFloat64() * 3, 5)
-	x, y := objects.SpawnCoords()
+	x, y := objects.SpawnCoords(sporeRadius, hub.SharedGameObjects.Players, hub.SharedGameObjects.Spores)
 
 	return &objects.Spore{X: x, Y: y, Radius: sporeRadius}
+}
+
+func (hub *Hub) replenishSporesLoop(rate time.Duration) {
+	ticker := time.NewTicker(rate)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		sporesRemaining := hub.SharedGameObjects.Spores.Len()
+		diff := MaxSpores - sporesRemaining
+
+		if diff <= 0 {
+			continue
+		}
+
+		log.Printf("%d spores remain - going to replenish %d spores", sporesRemaining, diff)
+
+		// Don't really want to spawn too many at a time, otherwise it can cause lag spikes
+		for i := 0; i < min(diff, 10); i++ {
+			spore := hub.newSpore()
+			sporeId := hub.SharedGameObjects.Spores.Add(spore)
+
+			hub.BroadcastChan <- &packets.Packet{
+				SenderId: 0,
+				Msg: packets.NewSpore(sporeId, spore),
+			}
+
+			// Sleep a little bit to avoid lag spikes
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
 }
